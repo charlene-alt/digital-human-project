@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import time
 import random
+import base64
 
 # 页面配置
 st.set_page_config(
@@ -14,7 +15,7 @@ st.set_page_config(
 # 初始化session state
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": "👋 你好！我是基于'14865'训练体系的智能数字人，请开始在下方输入问题。"}
+        {"role": "assistant", "content": "👋 你好！我是基于'14865'训练体系的智能数字人，支持语音对话和多种AI模型。"}
     ]
 if "api_key" not in st.session_state:
     st.session_state.api_key = ""
@@ -22,6 +23,12 @@ if "current_subject" not in st.session_state:
     st.session_state.current_subject = "会计学"
 if "training_round" not in st.session_state:
     st.session_state.training_round = 1
+if "auto_speech" not in st.session_state:
+    st.session_state.auto_speech = True
+if "selected_model" not in st.session_state:
+    st.session_state.selected_model = "gpt-3.5-turbo"
+if "api_status" not in st.session_state:
+    st.session_state.api_status = "disconnected"  # disconnected, testing, connected, error
 
 # 自定义CSS样式
 st.markdown("""
@@ -61,15 +68,57 @@ st.markdown("""
         border: 1px solid #e0e0e0;
     }
     .stButton button {
-        width: 100%;
         border-radius: 10px;
         margin: 2px 0;
     }
-    .api-status {
-        padding: 10px;
+    
+    /* API状态指示器 */
+    .status-connected {
+        background: #4CAF50;
+        color: white;
+        padding: 8px 12px;
+        border-radius: 20px;
+        font-weight: bold;
+        text-align: center;
+    }
+    .status-disconnected {
+        background: #ff9800;
+        color: white;
+        padding: 8px 12px;
+        border-radius: 20px;
+        font-weight: bold;
+        text-align: center;
+    }
+    .status-testing {
+        background: #2196F3;
+        color: white;
+        padding: 8px 12px;
+        border-radius: 20px;
+        font-weight: bold;
+        text-align: center;
+    }
+    .status-error {
+        background: #f44336;
+        color: white;
+        padding: 8px 12px;
+        border-radius: 20px;
+        font-weight: bold;
+        text-align: center;
+    }
+    
+    /* 语音按钮样式 */
+    .voice-btn {
+        background: linear-gradient(135deg, #FF6B6B, #FF8E53) !important;
+        color: white !important;
+    }
+    
+    /* 模型选择器样式 */
+    .model-selector {
+        background: #f8f9fa;
+        padding: 15px;
         border-radius: 10px;
         margin: 10px 0;
-        text-align: center;
+        border-left: 4px solid #667eea;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -98,8 +147,94 @@ SUBJECTS_DATA = {
     }
 }
 
+# 支持的AI模型
+AI_MODELS = {
+    "gpt-3.5-turbo": {"name": "GPT-3.5 Turbo", "description": "快速响应，成本较低"},
+    "gpt-4": {"name": "GPT-4", "description": "更强大的推理能力"},
+    "gpt-4-turbo": {"name": "GPT-4 Turbo", "description": "平衡性能与成本"}
+}
+
+# 语音合成功能
+def text_to_speech_html(text, rate=1.0, pitch=1.0):
+    """生成语音合成的HTML代码"""
+    # 清理文本，避免特殊字符问题
+    clean_text = text.replace('"', '').replace("'", "").replace("`", "").replace("\n", " ")[:150]
+    
+    return f'''
+    <script>
+        function speakText() {{
+            if ('speechSynthesis' in window) {{
+                // 停止之前的语音
+                window.speechSynthesis.cancel();
+                
+                const utterance = new SpeechSynthesisUtterance();
+                utterance.text = "{clean_text}";
+                utterance.lang = 'zh-CN';
+                utterance.rate = {rate};
+                utterance.pitch = {pitch};
+                utterance.volume = 0.8;
+                
+                utterance.onstart = function() {{
+                    console.log('语音开始');
+                }};
+                
+                utterance.onend = function() {{
+                    console.log('语音结束');
+                    // 发送消息通知Streamlit
+                    window.parent.postMessage({{type: 'speechEnd'}}, '*');
+                }};
+                
+                utterance.onerror = function(event) {{
+                    console.error('语音错误:', event);
+                }};
+                
+                // 延迟执行避免冲突
+                setTimeout(() => {{
+                    window.speechSynthesis.speak(utterance);
+                }}, 500);
+            }} else {{
+                console.warn('浏览器不支持语音合成');
+            }}
+        }}
+        
+        // 立即执行
+        speakText();
+    </script>
+    '''
+
+# API测试函数
+def test_api_connection(api_key, model):
+    """测试API连接是否正常"""
+    if not api_key:
+        return False, "未提供API密钥"
+    
+    try:
+        url = "https://api.qiyiguo.uk/v1/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+        
+        data = {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": "请回复'连接成功'"}
+            ],
+            "max_tokens": 10
+        }
+        
+        response = requests.post(url, headers=headers, json=data, timeout=10)
+        
+        if response.status_code == 200:
+            return True, "✅ API连接成功"
+        else:
+            return False, f"❌ API连接失败: {response.status_code}"
+            
+    except Exception as e:
+        return False, f"❌ 连接错误: {str(e)}"
+
 # 反代API调用函数
-def call_proxy_api(user_input, api_key, subject):
+def call_proxy_api(user_input, api_key, subject, model):
     """调用反代API进行智能对话"""
     
     # 如果没有API密钥，使用演示模式
@@ -124,17 +259,10 @@ def call_proxy_api(user_input, api_key, subject):
 6 - 六大要素：资产、负债、权益、收入、费用、利润
 5 - 五大计量属性：历史成本、重置成本、可变现净值、现值、公允价值
 
-【训练要求】
-1. 当前学科：{subject}
-2. 核心指令必须基于14865体系
-3. 回答要深入浅出、通俗易懂、深入思考
-4. 形式生动活泼，体现数字人优势
-5. 注重跨学科思维融合
-
-请用专业但友好的方式回答用户问题。"""
+请用专业但友好的方式回答用户问题，体现深入浅出、通俗易懂的特点。"""
         
         data = {
-            "model": "gpt-3.5-turbo",  # 根据反代服务支持的模型调整
+            "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_input}
@@ -161,62 +289,26 @@ def call_proxy_api(user_input, api_key, subject):
 def get_demo_response(user_input, subject):
     """演示模式下的智能回复"""
     
-    # 14865框架回复模板
-    frameworks = {
-        "1": "从人性逻辑角度，这个问题涉及未来价值决策...",
-        "4": "基于四大准则（可靠性、相关性、可理解性、可比性）分析...",
-        "8": "考虑八项质量要求，特别是真实性和完整性的平衡...",
-        "6": "从六大要素视角，这个问题与资产管理和费用控制相关...",
-        "5": "运用五大计量属性进行价值评估..."
-    }
-    
     responses = [
-        f"""🧠 **基于14865体系的{subject}分析**
+        f"""🧠 **基于14865体系的{subject}分析** (演示模式)
 
 📋 **框架应用**：
 • 核心指导：4和8（四大准则和八项质量要求）
 • 底层逻辑：1（人性逻辑）- 基于未来价值的决策分析
 
 🎯 **专业洞察**：
-你的问题「{user_input}」在{subject}领域中，可以从以下角度深入分析：
-1. 确保信息的可靠性和相关性（4大准则）
-2. 平衡真实性与及时性的要求（8项质量）
-3. 考虑长期价值与短期利益的协调（人性逻辑）
+你的问题「{user_input}」在{subject}领域中，可以从14865体系多角度分析。
 
-💡 **建议**：
-建议结合14865体系进行系统性思考，提升专业判断力。""",
+💡 **建议**：输入API密钥可启用真实AI对话，获得更精准的分析。""",
 
-        f"""📊 **{subject}专业分析**
+        f"""📊 **{subject}专业分析** (演示模式)
 
 🔍 **14865视角**：
 • 1-人性逻辑：价值导向决策
 • 4-四大准则：建立分析标准
 • 6-六大要素：构建分析框架
 
-🎯 **问题解析**：
-「{user_input}」这个问题体现了{subject}的核心挑战。通过14865体系，我们可以：
-
-1. 从人性逻辑理解行为动机
-2. 用四大准则确保分析质量  
-3. 通过六大要素构建完整方案
-
-🚀 **能力提升**：这种分析方式将帮助你超越表面理解，达到专家级洞察力。""",
-
-        f"""💡 **智能训练反馈**
-
-🎯 **训练主题**：{subject}
-📚 **应用框架**：14865体系
-
-🔍 **分析路径**：
-1️⃣ 人性逻辑 → 理解价值驱动
-2️⃣ 四大准则 → 建立质量标准  
-3️⃣ 六大要素 → 构建分析框架
-4️⃣ 计量属性 → 进行价值评估
-
-📝 **针对你的问题**：「{user_input}」
-这是一个很好的{subject}训练案例！通过14865体系的多维度分析，可以培养系统性思维和专业判断力。
-
-💪 **继续努力**：多轮训练将显著提升你的{subject}专业水平！"""
+🎯 **提示**：设置API密钥后，我将通过真实AI模型提供更深入的专业分析。""",
     ]
     
     return random.choice(responses)
@@ -224,39 +316,106 @@ def get_demo_response(user_input, subject):
 # 侧边栏配置
 def sidebar_config():
     with st.sidebar:
-        st.markdown("""
+        # 训练状态
+        st.markdown(f"""
         <div style='background: linear-gradient(135deg, #667eea, #764ba2); padding: 15px; border-radius: 10px; color: white;'>
             <h3>🎯 训练状态</h3>
-            <p>学科: {}</p>
-            <p>轮次: 第{}轮</p>
+            <p>📚 学科: {st.session_state.current_subject}</p>
+            <p>🔄 轮次: 第{st.session_state.training_round}轮</p>
+            <p>🤖 模型: {AI_MODELS[st.session_state.selected_model]['name']}</p>
         </div>
-        """.format(st.session_state.current_subject, st.session_state.training_round), unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
         
-        # API设置
         st.markdown("---")
-        st.subheader("🔑 API设置")
         
+        # API状态显示
+        st.subheader("🔌 API连接状态")
+        
+        # 状态显示
+        status_html = {
+            "disconnected": '<div class="status-disconnected">🔴 未连接</div>',
+            "testing": '<div class="status-testing">🟡 测试中...</div>',
+            "connected": '<div class="status-connected">🟢 已连接</div>',
+            "error": '<div class="status-error">🔴 连接错误</div>'
+        }
+        
+        st.markdown(status_html[st.session_state.api_status], unsafe_allow_html=True)
+        
+        # API密钥输入
         api_key = st.text_input(
             "API密钥",
             type="password",
             value=st.session_state.api_key,
-            placeholder="输入反代API密钥（可选）",
-            help="如果没有密钥，系统将使用演示模式"
+            placeholder="输入反代API密钥",
+            help="从您的API服务商获取"
         )
-        st.session_state.api_key = api_key
         
-        # API状态显示
-        if api_key:
-            st.success("✅ API已配置 - 使用反代服务")
+        # 模型选择
+        st.markdown("---")
+        st.subheader("🤖 AI模型选择")
+        
+        selected_model = st.selectbox(
+            "选择AI模型",
+            options=list(AI_MODELS.keys()),
+            format_func=lambda x: f"{AI_MODELS[x]['name']} - {AI_MODELS[x]['description']}",
+            index=list(AI_MODELS.keys()).index(st.session_state.selected_model)
+        )
+        
+        # 测试连接按钮
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🧪 测试连接", use_container_width=True):
+                if api_key:
+                    st.session_state.api_status = "testing"
+                    st.rerun()
+                    success, message = test_api_connection(api_key, selected_model)
+                    if success:
+                        st.session_state.api_status = "connected"
+                        st.session_state.api_key = api_key
+                        st.session_state.selected_model = selected_model
+                        st.success(message)
+                    else:
+                        st.session_state.api_status = "error"
+                        st.error(message)
+                else:
+                    st.warning("请输入API密钥")
+        
+        with col2:
+            if st.button("🔄 保存设置", use_container_width=True):
+                st.session_state.api_key = api_key
+                st.session_state.selected_model = selected_model
+                st.success("设置已保存！")
+        
+        st.markdown("---")
+        
+        # 语音设置
+        st.subheader("🎵 语音设置")
+        auto_speech = st.checkbox("自动语音回复", value=st.session_state.auto_speech)
+        st.session_state.auto_speech = auto_speech
+        
+        if auto_speech:
+            st.success("🔊 语音功能已开启")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🎤 测试语音", use_container_width=True):
+                    test_script = text_to_speech_html("语音功能测试成功！欢迎使用14865训练系统。")
+                    st.components.v1.html(test_script, height=0)
+                    st.success("语音测试完成！")
+            
+            with col2:
+                if st.button("🔇 停止语音", use_container_width=True):
+                    stop_script = """
+                    <script>
+                        if ('speechSynthesis' in window) {
+                            window.speechSynthesis.cancel();
+                        }
+                    </script>
+                    """
+                    st.components.v1.html(stop_script, height=0)
+                    st.info("语音已停止")
         else:
-            st.info("ℹ️ 演示模式 - 功能完整")
-        
-        st.info("""
-        **反代API信息**：
-        - 端点：https://api.qiyiguo.uk/v1
-        - 支持模型：GPT系列
-        - 需要有效的API密钥
-        """)
+            st.info("🔇 语音功能已关闭")
         
         st.markdown("---")
         
@@ -288,18 +447,8 @@ def sidebar_config():
             if st.button("⏭️ 下一轮", use_container_width=True):
                 st.session_state.training_round += 1
                 st.session_state.messages = [
-                    {"role": "assistant", "content": f"🎉 进入第{st.session_state.training_round}轮训练！继续深化{st.session_state.current_subject}学习。"}
+                    {"role": "assistant", "content": f"🎉 进入第{st.session_state.training_round}轮训练！"}
                 ]
-                st.rerun()
-        
-        # 快速问题模板
-        st.markdown("---")
-        st.subheader("🚀 快速开始")
-        current_data = SUBJECTS_DATA[st.session_state.current_subject]
-        for pain_point in current_data["pain_points"][:3]:
-            if st.button(f"💡 {pain_point}", key=f"quick_{pain_point}", use_container_width=True):
-                user_input = f"请详细分析{st.session_state.current_subject}中的{pain_point}问题，基于14865体系给出专业解决方案"
-                st.session_state.quick_question = user_input
                 st.rerun()
 
 # 主应用
@@ -308,7 +457,7 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h2>🧮 14865数字人训练系统</h2>
-        <p>基于反代API · 跨学科专业训练 · 能力提升平台</p>
+        <p>语音对话 · 多模型支持 · 实时状态显示 · 专业训练平台</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -348,19 +497,59 @@ def main():
             '>
                 <div style="font-size: 70px; margin-bottom: 10px;">{current_data["emoji"]}</div>
                 <div style="font-size: 16px; font-weight: bold;">14865</div>
-                <div style="font-size: 12px; margin-top: 5px;">训练系统</div>
+                <div style="font-size: 12px; margin-top: 5px;">语音训练系统</div>
             </div>
             <h3>🤖 AI训练师</h3>
             <p><strong>当前学科</strong>: {st.session_state.current_subject}</p>
-            <p><strong>训练轮次</strong>: 第{st.session_state.training_round}轮</p>
-            <p><strong>API状态</strong>: {'✅ 已连接' if st.session_state.api_key else '🟡 演示模式'}</p>
+            <p><strong>AI模型</strong>: {AI_MODELS[st.session_state.selected_model]['name']}</p>
+            <p><strong>语音状态</strong>: {'🔊 开启' if st.session_state.auto_speech else '🔇 关闭'}</p>
         </div>
         """, unsafe_allow_html=True)
+        
+        # 快速问题
+        st.subheader("🚀 快速训练")
+        pain_points = SUBJECTS_DATA[st.session_state.current_subject]["pain_points"]
+        for pain_point in pain_points[:3]:
+            if st.button(f"💡 {pain_point}", key=f"quick_{pain_point}", use_container_width=True):
+                user_input = f"请详细分析{st.session_state.current_subject}中的{pain_point}问题"
+                st.session_state.quick_question = user_input
+                st.rerun()
     
     with col2:
-        st.subheader("💬 专业训练对话")
+        st.subheader("💬 实时对话训练")
         
-        # 显示对话历史
+        # 语音控制按钮
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("🔊 朗读最后回复", use_container_width=True):
+                if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
+                    last_response = st.session_state.messages[-1]["content"]
+                    tts_html = text_to_speech_html(last_response)
+                    st.components.v1.html(tts_html, height=0)
+        
+        with col2:
+            if st.button("⏸️ 暂停语音", use_container_width=True):
+                stop_script = """
+                <script>
+                    if ('speechSynthesis' in window) {
+                        window.speechSynthesis.pause();
+                    }
+                </script>
+                """
+                st.components.v1.html(stop_script, height=0)
+        
+        with col3:
+            if st.button("⏹️ 停止语音", use_container_width=True):
+                stop_script = """
+                <script>
+                    if ('speechSynthesis' in window) {
+                        window.speechSynthesis.cancel();
+                    }
+                </script>
+                """
+                st.components.v1.html(stop_script, height=0)
+        
+        # 显示对话
         for message in st.session_state.messages:
             if message["role"] == "user":
                 st.markdown(f'<div class="user-message">👤 {message["content"]}</div>', unsafe_allow_html=True)
@@ -383,10 +572,16 @@ def main():
                 response = call_proxy_api(
                     user_input, 
                     st.session_state.api_key,
-                    st.session_state.current_subject
+                    st.session_state.current_subject,
+                    st.session_state.selected_model
                 )
                 
                 st.session_state.messages.append({"role": "assistant", "content": response})
+                
+                # 语音合成
+                if st.session_state.auto_speech:
+                    tts_html = text_to_speech_html(response)
+                    st.components.v1.html(tts_html, height=0)
             
             st.rerun()
     
@@ -395,13 +590,21 @@ def main():
     
     # 页脚
     st.markdown("---")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.caption(f"🎯 {st.session_state.current_subject}")
     with col2:
         st.caption(f"🔄 第{st.session_state.training_round}轮")
     with col3:
-        st.caption("🌐 反代API服务")
+        st.caption(f"🤖 {AI_MODELS[st.session_state.selected_model]['name']}")
+    with col4:
+        status_text = {
+            "disconnected": "🔴 未连接",
+            "testing": "🟡 测试中", 
+            "connected": "🟢 已连接",
+            "error": "🔴 错误"
+        }
+        st.caption(status_text[st.session_state.api_status])
 
 if __name__ == "__main__":
     main()
