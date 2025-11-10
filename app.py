@@ -15,7 +15,7 @@ st.set_page_config(
 # 初始化session state
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": "👋 你好！我是基于14865训练体系的智能数字人，请选择运行模式开始对话。"}
+        {"role": "assistant", "content": "👋 你好！我是基于14865训练体系的智能数字人，支持多种Gemini模型。"}
     ]
 if "api_key" not in st.session_state:
     st.session_state.api_key = ""
@@ -91,6 +91,15 @@ st.markdown("""
         margin: 10px 0;
         border-left: 4px solid #667eea;
     }
+    .billing-badge {
+        background: #ff6b6b;
+        color: white;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 10px;
+        font-weight: bold;
+        margin-left: 5px;
+    }
     .user-message {
         background: #e3f2fd;
         padding: 12px 16px;
@@ -134,45 +143,61 @@ SUBJECTS_DATA = {
     }
 }
 
-# AI模型配置 - 修正API端点
+# 实际可用的Gemini模型配置
 AI_MODELS = {
     "demo": {
         "name": "🧪 演示模式",
         "description": "本地智能回复，无需API",
-        "type": "demo"
+        "type": "demo",
+        "billing": "免费"
     },
-    "gpt-3.5-turbo": {
-        "name": "🤖 GPT-3.5 Turbo",
-        "description": "快速响应，成本较低",
-        "type": "openai",
+    "gemini-2.5-pro": {
+        "name": "🔮 Gemini 2.5 Pro",
+        "description": "高性能专业模型",
+        "type": "gemini",
+        "billing": "1000k/次",
         "endpoint": "/chat/completions"
     },
-    "gpt-4": {
-        "name": "🧠 GPT-4",
-        "description": "更强的推理能力",
-        "type": "openai", 
+    "gemini-2.5-pro-preview-06-05": {
+        "name": "🚀 Gemini 2.5 Pro Preview",
+        "description": "最新预览版本",
+        "type": "gemini", 
+        "billing": "1000k/次",
         "endpoint": "/chat/completions"
     },
-    "gpt-4-turbo": {
-        "name": "⚡ GPT-4 Turbo",
-        "description": "平衡性能与速度",
-        "type": "openai",
+    "gemini-2.5-pro-120k": {
+        "name": "⚡ Gemini 2.5 Pro 120k",
+        "description": "快速响应版本",
+        "type": "gemini",
+        "billing": "120k/次", 
+        "endpoint": "/chat/completions"
+    },
+    "gemini-2.5-pro-vt-1000k": {
+        "name": "🎯 Gemini 2.5 Pro VT",
+        "description": "视觉思考增强版",
+        "type": "gemini",
+        "billing": "1000k/次",
+        "endpoint": "/chat/completions"
+    },
+    "gemini-2.5-pro-vt-250k": {
+        "name": "💫 Gemini 2.5 Pro VT Lite",
+        "description": "轻量视觉思考版",
+        "type": "gemini",
+        "billing": "250k/次",
         "endpoint": "/chat/completions"
     }
 }
 
-# 修正的API调用函数
-def call_chat_api(messages, api_key, model_name, base_url):
-    """修正的API调用函数，使用正确的端点"""
+# 统一的API调用函数 - 适配Gemini模型
+def call_gemini_api(messages, api_key, model_name, base_url):
+    """调用Gemini模型的API"""
     try:
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
         }
         
-        model_config = AI_MODELS.get(model_name, AI_MODELS["gpt-3.5-turbo"])
-        
-        # 统一使用OpenAI兼容格式
+        # 使用OpenAI兼容格式
         url = f"{base_url}/chat/completions"
         
         # 构建系统提示词
@@ -192,11 +217,11 @@ def call_chat_api(messages, api_key, model_name, base_url):
         final_messages.extend(user_messages)
         
         data = {
-            "model": model_name,
+            "model": model_name,  # 直接使用Gemini模型名称
             "messages": final_messages,
             "stream": False,
             "temperature": 0.7,
-            "max_tokens": 1000
+            "max_tokens": 2000  # Gemini支持更长的输出
         }
         
         response = requests.post(url, headers=headers, json=data, timeout=30)
@@ -221,34 +246,34 @@ def call_chat_api(messages, api_key, model_name, base_url):
     except Exception as e:
         return f"请求失败: {str(e)}"
 
-# 测试API连接 - 简化版本
+# 测试API连接
 def test_api_connection(api_key, model_name, base_url):
-    """测试API连接状态"""
+    """测试Gemini API连接状态"""
     if not api_key:
         return False, "请输入API密钥"
     
     try:
         # 使用简单的测试消息
         test_messages = [
-            {"role": "user", "content": "请简单回复'测试成功'三个字"}
+            {"role": "user", "content": "请回复'Gemini连接测试成功'"}
         ]
         
-        response = call_chat_api(test_messages, api_key, model_name, base_url)
+        response = call_gemini_api(test_messages, api_key, model_name, base_url)
         
-        if "测试成功" in response:
-            return True, "✅ API连接测试成功"
+        if "连接测试成功" in response or "测试成功" in response:
+            return True, "✅ Gemini API连接测试成功"
         elif "API错误" in response or "请求失败" in response:
             return False, response
         else:
             # 只要没有错误信息就认为连接成功
-            return True, f"✅ API连接正常 - 模型响应: {response[:50]}..."
+            return True, f"✅ Gemini API连接正常 - 响应: {response[:30]}..."
             
     except Exception as e:
         return False, f"连接测试失败: {str(e)}"
 
 # 获取可用模型列表
 def get_available_models(api_key, base_url):
-    """获取API支持的模型列表"""
+    """获取API支持的Gemini模型列表"""
     if not api_key:
         return []
     
@@ -264,10 +289,14 @@ def get_available_models(api_key, base_url):
             available_models = []
             if "data" in models_data:
                 for model in models_data["data"]:
-                    available_models.append(model["id"])
+                    model_id = model["id"]
+                    # 只显示Gemini相关模型
+                    if "gemini" in model_id.lower():
+                        available_models.append(model_id)
             return available_models
         return []
-    except:
+    except Exception as e:
+        st.error(f"获取模型列表失败: {str(e)}")
         return []
 
 # 演示模式回复
@@ -283,7 +312,7 @@ def get_demo_response(user_input, subject):
 🎯 **专业洞察**：
 您的提问「{user_input}」在{subject}领域中具有重要意义。通过14865体系的多维度分析，可以得出系统性的专业见解。
 
-💡 **建议**：切换到API模式可获得更精准的AI分析。""",
+💡 **建议**：切换到Gemini模型可获得更精准的AI分析。""",
 
         f"""📊 **{subject}专业视角**
 
@@ -293,7 +322,20 @@ def get_demo_response(user_input, subject):
 • 6-六大要素：构建完整分析
 
 💎 **核心价值**：
-这个问题体现了{subject}专业实践的关键挑战，通过14865体系的系统性思考，能够提升专业判断力。"""
+这个问题体现了{subject}专业实践的关键挑战，通过14865体系的系统性思考，能够提升专业判断力。""",
+
+        f"""🚀 **Gemini智能训练**
+
+🎯 **训练主题**：{subject}
+🤖 **推荐模型**：Gemini 2.5 Pro系列
+
+💡 **模型特点**：
+• 强大的推理能力
+• 专业的领域知识
+• 准确的逻辑分析
+
+📝 **当前问题**：「{user_input}」
+建议使用Gemini模型获得最佳训练效果。"""
     ]
     return random.choice(templates)
 
@@ -339,7 +381,7 @@ def sidebar_config():
             "API基础地址",
             value=st.session_state.api_base_url,
             placeholder="https://api.qiyiguo.uk/v1",
-            help="API服务的基础URL地址"
+            help="Gemini API服务的基础URL地址"
         )
         st.session_state.api_base_url = api_base_url
         
@@ -347,23 +389,25 @@ def sidebar_config():
             "API密钥",
             type="password",
             value=st.session_state.api_key,
-            placeholder="输入您的API密钥",
-            help="从API服务商获取"
+            placeholder="输入您的Gemini API密钥",
+            help="从API服务商获取Gemini模型密钥"
         )
         
         st.markdown("---")
         
         # 模型选择
-        st.subheader("🤖 AI模型")
+        st.subheader("🔮 Gemini模型")
         
-        # 显示可用的模型
+        # 显示Gemini模型
         for model_id, model_info in AI_MODELS.items():
             if model_id == "demo":
                 continue  # 演示模式单独处理
-                
+            
+            billing_badge = f"<span class='billing-badge'>{model_info['billing']}</span>"
+            
             st.markdown(f"""
             <div class="model-card">
-                <strong>{model_info['name']}</strong>
+                <strong>{model_info['name']} {billing_badge}</strong>
                 <br><small>{model_info['description']}</small>
             </div>
             """, unsafe_allow_html=True)
@@ -411,7 +455,7 @@ def sidebar_config():
                         st.session_state.api_status = "testing"
                         st.session_state.api_key = api_key
                         
-                        with st.spinner("测试API连接中..."):
+                        with st.spinner("测试Gemini API连接中..."):
                             success, message = test_api_connection(api_key, st.session_state.selected_model, api_base_url)
                         
                         if success:
@@ -424,15 +468,15 @@ def sidebar_config():
                         st.warning("请输入API密钥")
             
             with col2:
-                if st.button("🔄 刷新模型", use_container_width=True):
+                if st.button("🔄 发现模型", use_container_width=True):
                     if api_key:
-                        with st.spinner("获取模型列表中..."):
+                        with st.spinner("发现可用Gemini模型中..."):
                             available_models = get_available_models(api_key, api_base_url)
                         if available_models:
-                            st.success(f"发现 {len(available_models)} 个可用模型")
-                            st.write("可用模型:", ", ".join(available_models[:5]))
+                            st.success(f"发现 {len(available_models)} 个Gemini模型")
+                            st.write("可用模型:", ", ".join(available_models[:8]))
                         else:
-                            st.info("无法获取模型列表，请检查API密钥")
+                            st.info("未发现Gemini模型，请检查API密钥或使用预设模型")
         
         st.markdown("---")
         
@@ -485,7 +529,7 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h1 style="margin:0;">🧮 14865数字人训练系统</h1>
-        <p style="margin:10px 0 0 0; opacity:0.9;">修正API端点 · 稳定连接 · 专业训练</p>
+        <p style="margin:10px 0 0 0; opacity:0.9;">Gemini模型 · 专业训练 · 智能对话</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -495,7 +539,7 @@ def main():
         st.success(f"🎉 当前模式: {current_model['name']} - 快速响应，无需配置")
     else:
         if st.session_state.api_status == "connected":
-            st.success(f"🌐 当前模型: {current_model['name']} - API已连接")
+            st.success(f"🔮 当前模型: {current_model['name']} - API已连接 (计费: {current_model['billing']})")
         else:
             st.warning(f"⚠️ 当前模型: {current_model['name']} - 请测试API连接")
     
@@ -513,23 +557,23 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # API使用说明
-    with st.expander("📖 API使用说明"):
+    # Gemini模型说明
+    with st.expander("📖 Gemini模型说明"):
         st.write("""
-        **正确的API端点配置**：
-        - 基础地址：`https://api.qiyiguo.uk/v1`
-        - 聊天端点：`/chat/completions` 
-        - 模型端点：`/models`
+        **可用的Gemini模型**：
         
-        **支持的模型**：
-        - GPT-3.5 Turbo
-        - GPT-4
-        - GPT-4 Turbo
+        🚀 **高性能版本**：
+        - Gemini 2.5 Pro (1000k/次) - 全功能专业版
+        - Gemini 2.5 Pro Preview (1000k/次) - 最新预览版
         
-        **常见问题**：
-        - 404错误：检查API端点是否正确
-        - 401错误：检查API密钥是否正确
-        - 超时错误：检查网络连接
+        ⚡ **快速版本**：
+        - Gemini 2.5 Pro 120k (120k/次) - 快速响应版
+        
+        🎯 **视觉思考版本**：
+        - Gemini 2.5 Pro VT (1000k/次) - 视觉思考增强版
+        - Gemini 2.5 Pro VT Lite (250k/次) - 轻量视觉版
+        
+        **计费方式**：按次计费，请根据需求选择合适的模型。
         """)
     
     # 布局
@@ -538,6 +582,8 @@ def main():
     with col1:
         # 数字人形象
         current_data = SUBJECTS_DATA[st.session_state.current_subject]
+        current_model_info = AI_MODELS[st.session_state.selected_model]
+        
         st.markdown(f"""
         <div style='text-align: center; padding: 20px; background: white; border-radius: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-bottom: 20px;'>
             <div style='
@@ -547,12 +593,13 @@ def main():
                 color: white; margin: 0 auto;
             '>
                 <div style="font-size: 70px; margin-bottom: 15px;">{current_data["emoji"]}</div>
-                <div style="font-size: 18px; font-weight: bold;">AI导师</div>
+                <div style="font-size: 18px; font-weight: bold;">Gemini AI</div>
                 <div style="font-size: 12px; margin-top: 8px;">14865系统</div>
             </div>
             <h3 style="margin:15px 0 10px 0;">🤖 智能训练师</h3>
             <p><strong>当前学科</strong>: {st.session_state.current_subject}</p>
-            <p><strong>AI模型</strong>: {current_model['name']}</p>
+            <p><strong>AI模型</strong>: {current_model_info['name']}</p>
+            <p><strong>计费方式</strong>: {current_model_info['billing']}</p>
             <p><strong>连接状态</strong>: {st.session_state.api_status}</p>
             <p><strong>语音功能</strong>: {'🔊 开启' if st.session_state.auto_speech else '🔇 关闭'}</p>
         </div>
@@ -568,7 +615,7 @@ def main():
                 st.rerun()
     
     with col2:
-        st.subheader("💬 智能对话训练")
+        st.subheader("💬 Gemini智能对话")
         
         # 语音控制
         if st.session_state.auto_speech:
@@ -607,11 +654,11 @@ def main():
             # 添加用户消息
             st.session_state.messages.append({"role": "user", "content": user_input})
             
-            # 构建消息历史（只保留最近的10条消息避免过长）
-            recent_messages = st.session_state.messages[-10:] if len(st.session_state.messages) > 10 else st.session_state.messages.copy()
+            # 构建消息历史（只保留最近的8条消息避免过长）
+            recent_messages = st.session_state.messages[-8:] if len(st.session_state.messages) > 8 else st.session_state.messages.copy()
             
             # 添加系统提示词
-            system_prompt = f"""你是{st.session_state.current_subject}专家，严格遵循14865训练体系。请用专业但易懂的方式回答用户问题。"""
+            system_prompt = f"""你是{st.session_state.current_subject}专家，严格遵循14865训练体系。请用专业但易懂的方式回答用户问题，体现Gemini模型的强大推理能力。"""
             
             messages_with_system = [{"role": "system", "content": system_prompt}] + recent_messages
             
@@ -620,9 +667,9 @@ def main():
                 # 演示模式
                 response = get_demo_response(user_input, st.session_state.current_subject)
             else:
-                # API模式
-                with st.spinner(f"🤖 {current_model['name']} 思考中..."):
-                    response = call_chat_api(
+                # Gemini API模式
+                with st.spinner(f"🔮 {current_model_info['name']} 思考中..."):
+                    response = call_gemini_api(
                         messages_with_system,
                         st.session_state.api_key,
                         st.session_state.selected_model,
@@ -649,9 +696,9 @@ def main():
     with col2:
         st.caption(f"🔄 第{st.session_state.training_round}轮")
     with col3:
-        st.caption(f"🤖 {current_model['name']}")
+        st.caption(f"🔮 {current_model_info['name']}")
     with col4:
-        st.caption(f"🔗 {st.session_state.api_status}")
+        st.caption(f"💰 {current_model_info['billing']}")
 
 if __name__ == "__main__":
     main()
