@@ -15,7 +15,7 @@ st.set_page_config(
 # 初始化session state
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": "👋 你好！我是基于'14865'训练体系的智能数字人，支持语音对话和多种AI模型。"}
+        {"role": "assistant", "content": "👋 你好！我是基于'14865'训练体系的智能数字人，支持语音对话和Gemini AI模型。"}
     ]
 if "api_key" not in st.session_state:
     st.session_state.api_key = ""
@@ -26,9 +26,9 @@ if "training_round" not in st.session_state:
 if "auto_speech" not in st.session_state:
     st.session_state.auto_speech = True
 if "selected_model" not in st.session_state:
-    st.session_state.selected_model = "gpt-3.5-turbo"
+    st.session_state.selected_model = "gemini-2.5-pro"
 if "api_status" not in st.session_state:
-    st.session_state.api_status = "disconnected"  # disconnected, testing, connected, error
+    st.session_state.api_status = "disconnected"
 
 # 自定义CSS样式
 st.markdown("""
@@ -67,10 +67,6 @@ st.markdown("""
         margin-right: auto;
         border: 1px solid #e0e0e0;
     }
-    .stButton button {
-        border-radius: 10px;
-        margin: 2px 0;
-    }
     
     /* API状态指示器 */
     .status-connected {
@@ -106,18 +102,21 @@ st.markdown("""
         text-align: center;
     }
     
-    /* 语音按钮样式 */
-    .voice-btn {
-        background: linear-gradient(135deg, #FF6B6B, #FF8E53) !important;
-        color: white !important;
+    /* 计费信息样式 */
+    .billing-info {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 10px;
+        padding: 15px;
+        margin: 10px 0;
     }
     
-    /* 模型选择器样式 */
-    .model-selector {
+    /* 模型卡片样式 */
+    .model-card {
         background: #f8f9fa;
-        padding: 15px;
         border-radius: 10px;
-        margin: 10px 0;
+        padding: 15px;
+        margin: 8px 0;
         border-left: 4px solid #667eea;
     }
 </style>
@@ -147,24 +146,29 @@ SUBJECTS_DATA = {
     }
 }
 
-# 支持的AI模型
+# 支持的AI模型（适配新API）
 AI_MODELS = {
-    "gpt-3.5-turbo": {"name": "GPT-3.5 Turbo", "description": "快速响应，成本较低"},
-    "gpt-4": {"name": "GPT-4", "description": "更强大的推理能力"},
-    "gpt-4-turbo": {"name": "GPT-4 Turbo", "description": "平衡性能与成本"}
+    "gemini-2.5-pro": {
+        "name": "Gemini 2.5 Pro", 
+        "description": "高性能模型，按次计费",
+        "endpoint": "generateContent"
+    },
+    "gemini-2.0-flash": {
+        "name": "Gemini 2.0 Flash", 
+        "description": "快速响应模型",
+        "endpoint": "generateContent"
+    }
 }
 
 # 语音合成功能
 def text_to_speech_html(text, rate=1.0, pitch=1.0):
     """生成语音合成的HTML代码"""
-    # 清理文本，避免特殊字符问题
     clean_text = text.replace('"', '').replace("'", "").replace("`", "").replace("\n", " ")[:150]
     
     return f'''
     <script>
         function speakText() {{
             if ('speechSynthesis' in window) {{
-                // 停止之前的语音
                 window.speechSynthesis.cancel();
                 
                 const utterance = new SpeechSynthesisUtterance();
@@ -180,24 +184,13 @@ def text_to_speech_html(text, rate=1.0, pitch=1.0):
                 
                 utterance.onend = function() {{
                     console.log('语音结束');
-                    // 发送消息通知Streamlit
-                    window.parent.postMessage({{type: 'speechEnd'}}, '*');
                 }};
                 
-                utterance.onerror = function(event) {{
-                    console.error('语音错误:', event);
-                }};
-                
-                // 延迟执行避免冲突
                 setTimeout(() => {{
                     window.speechSynthesis.speak(utterance);
                 }}, 500);
-            }} else {{
-                console.warn('浏览器不支持语音合成');
             }}
         }}
-        
-        // 立即执行
         speakText();
     </script>
     '''
@@ -209,41 +202,51 @@ def test_api_connection(api_key, model):
         return False, "未提供API密钥"
     
     try:
-        url = "https://api.qiyiguo.uk/v1/chat/completions"
+        # 使用新的API端点格式
+        url = f"https://api.qiyiguo.uk/v1beta/models/{model}:generateContent"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
         }
         
+        # Gemini API的请求格式
         data = {
-            "model": model,
-            "messages": [
-                {"role": "user", "content": "请回复'连接成功'"}
-            ],
-            "max_tokens": 10
+            "contents": [
+                {
+                    "parts": [
+                        {"text": "请简单回复'连接测试成功'"}
+                    ]
+                }
+            ]
         }
         
-        response = requests.post(url, headers=headers, json=data, timeout=10)
+        response = requests.post(url, headers=headers, json=data, timeout=15)
         
         if response.status_code == 200:
-            return True, "✅ API连接成功"
+            result = response.json()
+            if "candidates" in result and len(result["candidates"]) > 0:
+                return True, "✅ API连接成功"
+            else:
+                return False, "❌ API响应格式错误"
         else:
             return False, f"❌ API连接失败: {response.status_code}"
             
     except Exception as e:
         return False, f"❌ 连接错误: {str(e)}"
 
-# 反代API调用函数
-def call_proxy_api(user_input, api_key, subject, model):
-    """调用反代API进行智能对话"""
+# 调用Gemini API
+def call_gemini_api(user_input, api_key, subject, model):
+    """调用Gemini API进行智能对话"""
     
     # 如果没有API密钥，使用演示模式
     if not api_key:
         return get_demo_response(user_input, subject)
     
     try:
-        # 使用反代网站
-        url = "https://api.qiyiguo.uk/v1/chat/completions"
+        # 构建API端点
+        endpoint = AI_MODELS[model]["endpoint"]
+        url = f"https://api.qiyiguo.uk/v1beta/models/{model}:{endpoint}"
+        
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
@@ -261,22 +264,32 @@ def call_proxy_api(user_input, api_key, subject, model):
 
 请用专业但友好的方式回答用户问题，体现深入浅出、通俗易懂的特点。"""
         
+        # Gemini API的请求格式
+        full_prompt = f"{system_prompt}\n\n用户问题：{user_input}"
+        
         data = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_input}
+            "contents": [
+                {
+                    "parts": [
+                        {"text": full_prompt}
+                    ]
+                }
             ],
-            "stream": False,
-            "temperature": 0.7,
-            "max_tokens": 1000
+            "generationConfig": {
+                "temperature": 0.7,
+                "maxOutputTokens": 1000
+            }
         }
         
         response = requests.post(url, headers=headers, json=data, timeout=30)
         
         if response.status_code == 200:
             result = response.json()
-            return result["choices"][0]["message"]["content"]
+            if "candidates" in result and len(result["candidates"]) > 0:
+                return result["candidates"][0]["content"]["parts"][0]["text"]
+            else:
+                st.error("API响应格式异常")
+                return get_demo_response(user_input, subject)
         else:
             st.error(f"API调用失败: {response.status_code}")
             return get_demo_response(user_input, subject)
@@ -299,7 +312,7 @@ def get_demo_response(user_input, subject):
 🎯 **专业洞察**：
 你的问题「{user_input}」在{subject}领域中，可以从14865体系多角度分析。
 
-💡 **建议**：输入API密钥可启用真实AI对话，获得更精准的分析。""",
+💡 **提示**：设置API密钥可启用真实Gemini AI对话，获得更精准的专业分析。""",
 
         f"""📊 **{subject}专业分析** (演示模式)
 
@@ -308,7 +321,7 @@ def get_demo_response(user_input, subject):
 • 4-四大准则：建立分析标准
 • 6-六大要素：构建分析框架
 
-🎯 **提示**：设置API密钥后，我将通过真实AI模型提供更深入的专业分析。""",
+🚀 **能力提升**：输入API密钥后，Gemini AI将提供深度专业分析。""",
     ]
     
     return random.choice(responses)
@@ -328,10 +341,19 @@ def sidebar_config():
         
         st.markdown("---")
         
+        # 计费信息
+        st.markdown("""
+        <div class="billing-info">
+            <h4>💰 计费信息</h4>
+            <p><strong>计费方式</strong>: 按次计费</p>
+            <p><strong>模型</strong>: Gemini 2.5 Pro</p>
+            <p><strong>特点</strong>: 1000k tokens/次</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
         # API状态显示
         st.subheader("🔌 API连接状态")
         
-        # 状态显示
         status_html = {
             "disconnected": '<div class="status-disconnected">🔴 未连接</div>',
             "testing": '<div class="status-testing">🟡 测试中...</div>',
@@ -346,7 +368,7 @@ def sidebar_config():
             "API密钥",
             type="password",
             value=st.session_state.api_key,
-            placeholder="输入反代API密钥",
+            placeholder="输入Gemini API密钥",
             help="从您的API服务商获取"
         )
         
@@ -354,25 +376,35 @@ def sidebar_config():
         st.markdown("---")
         st.subheader("🤖 AI模型选择")
         
-        selected_model = st.selectbox(
-            "选择AI模型",
-            options=list(AI_MODELS.keys()),
-            format_func=lambda x: f"{AI_MODELS[x]['name']} - {AI_MODELS[x]['description']}",
-            index=list(AI_MODELS.keys()).index(st.session_state.selected_model)
-        )
+        for model_id, model_info in AI_MODELS.items():
+            st.markdown(f"""
+            <div class="model-card">
+                <strong>{model_info['name']}</strong>
+                <br><small>{model_info['description']}</small>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if st.button(f"选择 {model_info['name']}", 
+                        key=f"model_{model_id}",
+                        use_container_width=True,
+                        type="primary" if model_id == st.session_state.selected_model else "secondary"):
+                st.session_state.selected_model = model_id
+                st.success(f"已切换到 {model_info['name']}")
         
         # 测试连接按钮
+        st.markdown("---")
+        st.subheader("🔧 连接测试")
+        
         col1, col2 = st.columns(2)
         with col1:
             if st.button("🧪 测试连接", use_container_width=True):
                 if api_key:
                     st.session_state.api_status = "testing"
                     st.rerun()
-                    success, message = test_api_connection(api_key, selected_model)
+                    success, message = test_api_connection(api_key, st.session_state.selected_model)
                     if success:
                         st.session_state.api_status = "connected"
                         st.session_state.api_key = api_key
-                        st.session_state.selected_model = selected_model
                         st.success(message)
                     else:
                         st.session_state.api_status = "error"
@@ -381,10 +413,9 @@ def sidebar_config():
                     st.warning("请输入API密钥")
         
         with col2:
-            if st.button("🔄 保存设置", use_container_width=True):
+            if st.button("💾 保存设置", use_container_width=True):
                 st.session_state.api_key = api_key
-                st.session_state.selected_model = selected_model
-                st.success("设置已保存！")
+                st.success("API密钥已保存！")
         
         st.markdown("---")
         
@@ -396,24 +427,10 @@ def sidebar_config():
         if auto_speech:
             st.success("🔊 语音功能已开启")
             
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🎤 测试语音", use_container_width=True):
-                    test_script = text_to_speech_html("语音功能测试成功！欢迎使用14865训练系统。")
-                    st.components.v1.html(test_script, height=0)
-                    st.success("语音测试完成！")
-            
-            with col2:
-                if st.button("🔇 停止语音", use_container_width=True):
-                    stop_script = """
-                    <script>
-                        if ('speechSynthesis' in window) {
-                            window.speechSynthesis.cancel();
-                        }
-                    </script>
-                    """
-                    st.components.v1.html(stop_script, height=0)
-                    st.info("语音已停止")
+            if st.button("🎤 测试语音", use_container_width=True):
+                test_script = text_to_speech_html("语音功能测试成功！欢迎使用14865训练系统。")
+                st.components.v1.html(test_script, height=0)
+                st.success("语音测试完成！")
         else:
             st.info("🔇 语音功能已关闭")
         
@@ -457,9 +474,14 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h2>🧮 14865数字人训练系统</h2>
-        <p>语音对话 · 多模型支持 · 实时状态显示 · 专业训练平台</p>
+        <p>Gemini AI · 语音对话 · 按次计费 · 专业训练平台</p>
     </div>
     """, unsafe_allow_html=True)
+    
+    # 计费提醒
+    st.info("""
+    💰 **计费说明**: 当前使用Gemini 2.5 Pro模型，按次计费（1000k tokens/次）。请确保API密钥有效且余额充足。
+    """)
     
     # 14865框架展示
     st.markdown("""
@@ -496,12 +518,13 @@ def main():
                 box-shadow: 0 8px 25px rgba(0,0,0,0.2);
             '>
                 <div style="font-size: 70px; margin-bottom: 10px;">{current_data["emoji"]}</div>
-                <div style="font-size: 16px; font-weight: bold;">14865</div>
-                <div style="font-size: 12px; margin-top: 5px;">语音训练系统</div>
+                <div style="font-size: 16px; font-weight: bold;">Gemini AI</div>
+                <div style="font-size: 12px; margin-top: 5px;">14865训练系统</div>
             </div>
             <h3>🤖 AI训练师</h3>
             <p><strong>当前学科</strong>: {st.session_state.current_subject}</p>
             <p><strong>AI模型</strong>: {AI_MODELS[st.session_state.selected_model]['name']}</p>
+            <p><strong>API状态</strong>: {'🟢 已连接' if st.session_state.api_status == 'connected' else '🔴 未连接'}</p>
             <p><strong>语音状态</strong>: {'🔊 开启' if st.session_state.auto_speech else '🔇 关闭'}</p>
         </div>
         """, unsafe_allow_html=True)
@@ -519,35 +542,25 @@ def main():
         st.subheader("💬 实时对话训练")
         
         # 语音控制按钮
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("🔊 朗读最后回复", use_container_width=True):
-                if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
-                    last_response = st.session_state.messages[-1]["content"]
-                    tts_html = text_to_speech_html(last_response)
-                    st.components.v1.html(tts_html, height=0)
-        
-        with col2:
-            if st.button("⏸️ 暂停语音", use_container_width=True):
-                stop_script = """
-                <script>
-                    if ('speechSynthesis' in window) {
-                        window.speechSynthesis.pause();
-                    }
-                </script>
-                """
-                st.components.v1.html(stop_script, height=0)
-        
-        with col3:
-            if st.button("⏹️ 停止语音", use_container_width=True):
-                stop_script = """
-                <script>
-                    if ('speechSynthesis' in window) {
-                        window.speechSynthesis.cancel();
-                    }
-                </script>
-                """
-                st.components.v1.html(stop_script, height=0)
+        if st.session_state.auto_speech:
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🔊 朗读回复", use_container_width=True):
+                    if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
+                        last_response = st.session_state.messages[-1]["content"]
+                        tts_html = text_to_speech_html(last_response)
+                        st.components.v1.html(tts_html, height=0)
+            
+            with col2:
+                if st.button("⏹️ 停止语音", use_container_width=True):
+                    stop_script = """
+                    <script>
+                        if ('speechSynthesis' in window) {
+                            window.speechSynthesis.cancel();
+                        }
+                    </script>
+                    """
+                    st.components.v1.html(stop_script, height=0)
         
         # 显示对话
         for message in st.session_state.messages:
@@ -568,8 +581,8 @@ def main():
             st.session_state.messages.append({"role": "user", "content": user_input})
             
             # 获取回复
-            with st.spinner("🧠 14865体系分析中..."):
-                response = call_proxy_api(
+            with st.spinner("🧠 Gemini AI分析中..."):
+                response = call_gemini_api(
                     user_input, 
                     st.session_state.api_key,
                     st.session_state.current_subject,
