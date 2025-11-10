@@ -134,7 +134,7 @@ SUBJECTS_DATA = {
     }
 }
 
-# AI模型配置 - 基于参考网站的API结构
+# AI模型配置 - 修正API端点
 AI_MODELS = {
     "demo": {
         "name": "🧪 演示模式",
@@ -153,23 +153,17 @@ AI_MODELS = {
         "type": "openai", 
         "endpoint": "/chat/completions"
     },
-    "claude-3-sonnet": {
-        "name": "🌟 Claude 3 Sonnet",
+    "gpt-4-turbo": {
+        "name": "⚡ GPT-4 Turbo",
         "description": "平衡性能与速度",
-        "type": "anthropic",
-        "endpoint": "/messages"
-    },
-    "gemini-pro": {
-        "name": "🔮 Gemini Pro",
-        "description": "Google最新模型",
-        "type": "google",
-        "endpoint": "/generateContent"
+        "type": "openai",
+        "endpoint": "/chat/completions"
     }
 }
 
-# 基于参考网站的API调用函数
+# 修正的API调用函数
 def call_chat_api(messages, api_key, model_name, base_url):
-    """统一的API调用函数，基于参考网站结构"""
+    """修正的API调用函数，使用正确的端点"""
     try:
         headers = {
             "Content-Type": "application/json",
@@ -178,100 +172,103 @@ def call_chat_api(messages, api_key, model_name, base_url):
         
         model_config = AI_MODELS.get(model_name, AI_MODELS["gpt-3.5-turbo"])
         
-        if model_config["type"] == "openai":
-            # OpenAI兼容格式
-            url = f"{base_url}{model_config['endpoint']}"
-            data = {
-                "model": model_name,
-                "messages": messages,
-                "stream": False,
-                "temperature": 0.7,
-                "max_tokens": 1000
-            }
-            
-        elif model_config["type"] == "anthropic":
-            # Claude格式
-            url = f"{base_url}{model_config['endpoint']}"
-            # 转换消息格式
-            claude_messages = []
-            for msg in messages:
-                if msg["role"] == "system":
-                    continue  # Claude系统消息处理方式不同
-                claude_messages.append({
-                    "role": msg["role"],
-                    "content": msg["content"]
-                })
-            
-            data = {
-                "model": model_name,
-                "messages": claude_messages,
-                "max_tokens": 1000,
-                "temperature": 0.7
-            }
-            
-        elif model_config["type"] == "google":
-            # Gemini格式
-            url = f"{base_url}{model_config['endpoint']}"
-            # 转换消息格式
-            parts = []
-            for msg in messages:
-                parts.append({"text": f"{msg['role']}: {msg['content']}"})
-            
-            data = {
-                "contents": [{
-                    "parts": parts
-                }],
-                "generationConfig": {
-                    "maxOutputTokens": 1000,
-                    "temperature": 0.7
-                }
-            }
-        else:
-            return "不支持的模型类型"
+        # 统一使用OpenAI兼容格式
+        url = f"{base_url}/chat/completions"
+        
+        # 构建系统提示词
+        system_message = None
+        user_messages = []
+        
+        for msg in messages:
+            if msg["role"] == "system":
+                system_message = msg["content"]
+            else:
+                user_messages.append(msg)
+        
+        # 构建最终消息列表
+        final_messages = []
+        if system_message:
+            final_messages.append({"role": "system", "content": system_message})
+        final_messages.extend(user_messages)
+        
+        data = {
+            "model": model_name,
+            "messages": final_messages,
+            "stream": False,
+            "temperature": 0.7,
+            "max_tokens": 1000
+        }
         
         response = requests.post(url, headers=headers, json=data, timeout=30)
         
         if response.status_code == 200:
             result = response.json()
-            
-            # 根据不同模型解析响应
-            if model_config["type"] == "openai":
-                return result["choices"][0]["message"]["content"]
-            elif model_config["type"] == "anthropic":
-                return result["content"][0]["text"]
-            elif model_config["type"] == "google":
-                return result["candidates"][0]["content"]["parts"][0]["text"]
-            else:
-                return str(result)
-                
+            return result["choices"][0]["message"]["content"]
         else:
-            return f"API错误: {response.status_code} - {response.text}"
+            error_msg = f"API错误 {response.status_code}"
+            try:
+                error_detail = response.json()
+                if "error" in error_detail:
+                    error_msg = f"API错误: {error_detail['error'].get('message', str(error_detail))}"
+            except:
+                error_msg = f"API错误 {response.status_code}: {response.text}"
+            return error_msg
             
+    except requests.exceptions.Timeout:
+        return "请求超时，请检查网络连接或稍后重试"
+    except requests.exceptions.ConnectionError:
+        return "网络连接错误，请检查网络设置"
     except Exception as e:
         return f"请求失败: {str(e)}"
 
-# 测试API连接
+# 测试API连接 - 简化版本
 def test_api_connection(api_key, model_name, base_url):
     """测试API连接状态"""
     if not api_key:
         return False, "请输入API密钥"
     
     try:
+        # 使用简单的测试消息
         test_messages = [
-            {"role": "user", "content": "请回复'连接测试成功'"}
+            {"role": "user", "content": "请简单回复'测试成功'三个字"}
         ]
         
         response = call_chat_api(test_messages, api_key, model_name, base_url)
         
-        if "连接测试成功" in response or "测试成功" in response:
+        if "测试成功" in response:
             return True, "✅ API连接测试成功"
         elif "API错误" in response or "请求失败" in response:
             return False, response
         else:
-            return True, "✅ API连接正常"
+            # 只要没有错误信息就认为连接成功
+            return True, f"✅ API连接正常 - 模型响应: {response[:50]}..."
             
     except Exception as e:
         return False, f"连接测试失败: {str(e)}"
+
+# 获取可用模型列表
+def get_available_models(api_key, base_url):
+    """获取API支持的模型列表"""
+    if not api_key:
+        return []
+    
+    try:
+        url = f"{base_url}/models"
+        headers = {
+            "Authorization": f"Bearer {api_key}"
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            models_data = response.json()
+            available_models = []
+            if "data" in models_data:
+                for model in models_data["data"]:
+                    available_models.append(model["id"])
+            return available_models
+        return []
+    except:
+        return []
 
 # 演示模式回复
 def get_demo_response(user_input, subject):
@@ -296,20 +293,7 @@ def get_demo_response(user_input, subject):
 • 6-六大要素：构建完整分析
 
 💎 **核心价值**：
-这个问题体现了{subject}专业实践的关键挑战，通过14865体系的系统性思考，能够提升专业判断力。""",
-
-        f"""🚀 **智能训练反馈**
-
-🎯 **训练主题**：{subject}
-📚 **应用框架**：14865体系
-
-🌟 **分析路径**：
-1️⃣ 人性逻辑 → 价值导向分析
-2️⃣ 四大准则 → 质量标准建立
-3️⃣ 六大要素 → 完整框架构建
-
-📝 **针对问题**：「{user_input}」
-这是一个优秀的{subject}训练案例！建议深入探讨相关概念，强化专业理解。"""
+这个问题体现了{subject}专业实践的关键挑战，通过14865体系的系统性思考，能够提升专业判断力。"""
     ]
     return random.choice(templates)
 
@@ -372,6 +356,7 @@ def sidebar_config():
         # 模型选择
         st.subheader("🤖 AI模型")
         
+        # 显示可用的模型
         for model_id, model_info in AI_MODELS.items():
             if model_id == "demo":
                 continue  # 演示模式单独处理
@@ -419,22 +404,35 @@ def sidebar_config():
         st.markdown(status_html[st.session_state.api_status], unsafe_allow_html=True)
         
         if st.session_state.selected_model != "demo":
-            if st.button("🧪 测试连接", use_container_width=True):
-                if api_key:
-                    st.session_state.api_status = "testing"
-                    st.session_state.api_key = api_key
-                    
-                    with st.spinner("测试API连接中..."):
-                        success, message = test_api_connection(api_key, st.session_state.selected_model, api_base_url)
-                    
-                    if success:
-                        st.session_state.api_status = "connected"
-                        st.success(message)
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🧪 测试连接", use_container_width=True):
+                    if api_key:
+                        st.session_state.api_status = "testing"
+                        st.session_state.api_key = api_key
+                        
+                        with st.spinner("测试API连接中..."):
+                            success, message = test_api_connection(api_key, st.session_state.selected_model, api_base_url)
+                        
+                        if success:
+                            st.session_state.api_status = "connected"
+                            st.success(message)
+                        else:
+                            st.session_state.api_status = "error"
+                            st.error(message)
                     else:
-                        st.session_state.api_status = "error"
-                        st.error(message)
-                else:
-                    st.warning("请输入API密钥")
+                        st.warning("请输入API密钥")
+            
+            with col2:
+                if st.button("🔄 刷新模型", use_container_width=True):
+                    if api_key:
+                        with st.spinner("获取模型列表中..."):
+                            available_models = get_available_models(api_key, api_base_url)
+                        if available_models:
+                            st.success(f"发现 {len(available_models)} 个可用模型")
+                            st.write("可用模型:", ", ".join(available_models[:5]))
+                        else:
+                            st.info("无法获取模型列表，请检查API密钥")
         
         st.markdown("---")
         
@@ -487,7 +485,7 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h1 style="margin:0;">🧮 14865数字人训练系统</h1>
-        <p style="margin:10px 0 0 0; opacity:0.9;">多模型支持 · 专业训练 · 智能对话</p>
+        <p style="margin:10px 0 0 0; opacity:0.9;">修正API端点 · 稳定连接 · 专业训练</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -514,6 +512,25 @@ def main():
         </div>
     </div>
     """, unsafe_allow_html=True)
+    
+    # API使用说明
+    with st.expander("📖 API使用说明"):
+        st.write("""
+        **正确的API端点配置**：
+        - 基础地址：`https://api.qiyiguo.uk/v1`
+        - 聊天端点：`/chat/completions` 
+        - 模型端点：`/models`
+        
+        **支持的模型**：
+        - GPT-3.5 Turbo
+        - GPT-4
+        - GPT-4 Turbo
+        
+        **常见问题**：
+        - 404错误：检查API端点是否正确
+        - 401错误：检查API密钥是否正确
+        - 超时错误：检查网络连接
+        """)
     
     # 布局
     col1, col2 = st.columns([1, 2])
@@ -590,15 +607,13 @@ def main():
             # 添加用户消息
             st.session_state.messages.append({"role": "user", "content": user_input})
             
-            # 构建消息历史
-            messages = st.session_state.messages.copy()
+            # 构建消息历史（只保留最近的10条消息避免过长）
+            recent_messages = st.session_state.messages[-10:] if len(st.session_state.messages) > 10 else st.session_state.messages.copy()
             
             # 添加系统提示词
-            system_prompt = f"""你是{st.session_state.current_subject}专家，严格遵循14865训练体系：
-1-人性逻辑, 4-四大准则, 8-质量要求, 6-会计要素, 5-计量属性
-请用专业但易懂的方式回答，体现深入浅出的特点。"""
+            system_prompt = f"""你是{st.session_state.current_subject}专家，严格遵循14865训练体系。请用专业但易懂的方式回答用户问题。"""
             
-            messages_with_system = [{"role": "system", "content": system_prompt}] + messages
+            messages_with_system = [{"role": "system", "content": system_prompt}] + recent_messages
             
             # 获取回复
             if st.session_state.selected_model == "demo":
